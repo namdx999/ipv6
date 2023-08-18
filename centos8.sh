@@ -1,138 +1,139 @@
 #!/bin/sh
-
-# Hàm tạo chuỗi ngẫu nhiên
 random() {
-  tr </dev/urandom -dc A-Za-z0-9 | head -c5
-  echo
+	tr </dev/urandom -dc A-Za-z0-9 | head -c5
+	echo
 }
 
-# Mảng ký tự để sinh IP ngẫu nhiên  
 array=(1 2 3 4 5 6 7 8 9 0 a b c d e f)
-
-# Hàm sinh IP IPv6 ngẫu nhiên 
 gen64() {
-  ip64() {
-    echo "${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}"
-  }
-
-  echo "$1:$(ip64):$(ip64):$(ip64):$(ip64)"
+	ip64() {
+		echo "${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}"
+	}
+	echo "$1:$(ip64):$(ip64):$(ip64):$(ip64)"
 }
-
-# Hàm cài đặt 3proxy
 install_3proxy() {
+    echo "installing 3proxy"
+    mkdir -p /3proxy
+    cd /3proxy
+    URL="https://github.com/z3APA3A/3proxy/archive/0.9.3.tar.gz"
+    wget -qO- $URL | bsdtar -xvf-
+    cd 3proxy-0.9.3
+    make -f Makefile.Linux
+    mkdir -p /usr/local/etc/3proxy/{bin,logs,stat}
+    mv /3proxy/3proxy-0.9.3/bin/3proxy /usr/local/etc/3proxy/bin/
+    wget https://raw.githubusercontent.com/xlandgroup/ipv4-ipv6-proxy/master/scripts/3proxy.service-Centos8 --output-document=/3proxy/3proxy-0.9.3/scripts/3proxy.service2
+    cp /3proxy/3proxy-0.9.3/scripts/3proxy.service2 /usr/lib/systemd/system/3proxy.service
+    systemctl link /usr/lib/systemd/system/3proxy.service
+    systemctl daemon-reload
+#    systemctl enable 3proxy
+    echo "* hard nofile 999999" >>  /etc/security/limits.conf
+    echo "* soft nofile 999999" >>  /etc/security/limits.conf
+    echo "net.ipv6.conf.enp1s0.proxy_ndp=1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.all.proxy_ndp=1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.default.forwarding=1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+    echo "net.ipv6.ip_nonlocal_bind = 1" >> /etc/sysctl.conf
+    sysctl -p
+    systemctl stop firewalld
+    systemctl disable firewalld
 
-  # Cài gói cần thiết
-  yum install -y gcc net-tools bsdtar make unzip
-
-  # Tải và giải nén 3proxy
-  URL=https://github.com/z3APA3A/3proxy/archive/0.9.3.tar.gz
-  wget -qO- $URL | bsdtar -xvf-
-
-  # Biên dịch và cài đặt
-  cd 3proxy-0.9.3
-  make -f Makefile.Linux
-  make install
-
-  # Tạo thư mục cấu hình
-  mkdir -p /usr/local/etc/3proxy/{bin,logs,stat}
-
-  # Copy binary 3proxy vào thư mục bin
-  cp /usr/local/bin/3proxy /usr/local/etc/3proxy/bin/
-
-  # Tạo systemd service 
-  cat > /etc/systemd/system/3proxy.service <<EOF
-[Unit]
-Description=3Proxy
-
-[Service] 
-ExecStart=/usr/local/bin/3proxy /usr/local/etc/3proxy.cfg
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  # Enable service 3proxy
-  systemctl enable 3proxy
-
-  echo "3proxy installed successfully!"
-
+    cd $WORKDIR
 }
 
-# Hàm tạo cấu hình 3proxy
-gen_3proxy_conf() {
-  
-  cat <<EOF > /usr/local/etc/3proxy.cfg 
+gen_3proxy() {
+    cat <<EOF
 daemon
 maxconn 2000
-...
-
+nserver 1.1.1.1
+nserver 8.8.4.4
+nserver 2001:4860:4860::8888
+nserver 2001:4860:4860::8844
+nscache 65536
+timeouts 1 5 30 60 180 1800 15 60
+setgid 65535
+setuid 65535
+stacksize 6291456 
+flush
+auth strong
+users $(awk -F "/" 'BEGIN{ORS="";} {print $1 ":CL:" $2 " "}' ${WORKDATA})
 $(awk -F "/" '{print "allow " \\
            "proxy -6 -n -a -p" $2 " -i" $1 "\\n" \\
-           "flush\\n"}' ${WORKDIR}/proxy_data.txt)  
+           "flush\\n"}' ${WORKDATA})  
 EOF
-
 }
 
-# Hàm sinh dữ liệu proxy (ip và port)
-gen_proxy_data() {
-
-  rm -f ${WORKDIR}/proxy_data.txt
-
-  seq $START_PORT $END_PORT | while read port; do
-    echo "$PROXY_IP/$port/" >> ${WORKDIR}/proxy_data.txt
-  done
-
+gen_proxy_file_for_user() {
+    cat >proxy.txt <<EOF
+$(awk -F "/" '{print  $1 ":" $2 }' ${WORKDATA})
+EOF
 }
 
-# Hàm tạo file proxy.txt
-gen_proxy_file() {
+upload_proxy() {
+    cd $WORKDIR
+    local PASS=$(random)
+    zip --password $PASS proxy.zip proxy.txt
+    URL=$(curl -s --upload-file proxy.zip https://transfer.sh/proxy.zip)
 
-  awk -F "/" '{print $1 "|" $2}' ${WORKDIR}/proxy_data.txt > ${WORKDIR}/proxy.txt
-
-} 
-
-# Hàm nén và upload proxy file
-upload_proxy_file() {
-
-  cd ${WORKDIR}
-
-  ZIP_PASS=$(random) 
-
-  zip --password ${ZIP_PASS} proxy.zip proxy.txt
-
-  UPLOAD_LINK=$(curl --upload-file proxy.zip https://transfer.sh/proxy.zip)
-
-  echo "Proxy file download link: ${UPLOAD_LINK}"
-  echo "Unzip password: ${ZIP_PASS}"  
+    echo "Proxy is ready! Format IP:PORT"
+    echo "Download zip archive from: ${URL}"
+    echo "Password: ${PASS}"
 
 }
+gen_data() {
+    seq $FIRST_PORT $LAST_PORT | while read port; do
+        echo "$IP6/$port/" >> $WORKDIR/data.txt
+    done
+}
 
-# Thiết lập các biến cần thiết
-WORKDIR=/root/proxy
-mkdir -p ${WORKDIR}
+gen_iptables() {
+    cat <<EOF
+    $(awk -F "/" '{print "iptables -I INPUT -p tcp --dport " $4 "  -m state --state NEW -j ACCEPT"}' ${WORKDATA}) 
+EOF
+}
 
-PROXY_IP=$(curl -6 icanhazip.com | cut -f1-4 -d':')
+gen_ifconfig() {
+    cat <<EOF
+$(awk -F "/" '{print "ifconfig enp1s0 inet6 add " $5 "/64"}' ${WORKDATA})
+EOF
+}
+echo "installing apps"
+yum -y install gcc net-tools bsdtar zip make >/dev/null
 
-START_PORT=10000
-END_PORT=15000
-
-# Cài đặt 3proxy
 install_3proxy
 
-# Sinh dữ liệu proxy
-gen_proxy_data
+echo "working folder = /home/proxy-installer"
+WORKDIR="/home/proxy-installer"
+WORKDATA="${WORKDIR}/data.txt"
+mkdir $WORKDIR && cd $_
 
-# Tạo cấu hình 3proxy
-gen_3proxy_conf
+IP4=$(curl -4 -s icanhazip.com)
+IP6=$(curl -6 -s icanhazip.com | cut -f1-4 -d':')
 
-# Tạo file proxy.txt
-gen_proxy_file  
+echo "Internal ip = ${IP4}. Exteranl sub for ip6 = ${IP6}"
 
-# Nén và upload proxy file
-upload_proxy_file
+echo "How many proxy do you want to create? Example 500"	
+read COUNT	
+FIRST_PORT=10000	
+LAST_PORT=$(($FIRST_PORT + $COUNT))
 
-# Khởi động 3proxy
-systemctl start 3proxy
+gen_data >$WORKDIR/data.txt
+gen_iptables >$WORKDIR/boot_iptables.sh
+gen_ifconfig >$WORKDIR/boot_ifconfig.sh
+chmod +x $WORKDIR/boot_*.sh /etc/rc.local
 
-echo "Proxy IPv6 generation completed!"
+gen_3proxy >/usr/local/etc/3proxy/3proxy.cfg
+
+cat >>/etc/rc.local <<EOF
+systemctl start NetworkManager.service
+ifup enp1s0
+bash ${WORKDIR}/boot_iptables.sh
+bash ${WORKDIR}/boot_ifconfig.sh
+ulimit -n 65535
+/usr/local/etc/3proxy/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg &
+EOF
+
+bash /etc/rc.local
+
+gen_proxy_file_for_user
+
+upload_proxy
