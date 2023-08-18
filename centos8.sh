@@ -56,9 +56,9 @@ stacksize 6291456
 flush
 auth strong
 users $(awk -F "/" 'BEGIN{ORS="";} {print $1 ":CL:" $2 " "}' ${WORKDATA})
-$(awk -F "/" '{print "allow " \\
-           "proxy -6 -n -a -p" $2 " -i" $1 "\\n" \\
-           "flush\\n"}' ${WORKDATA})  
+$(awk -F "/" '{print "allow \\n" 
+           "proxy -6 -n -a -p" $2 " -i" $1 "\\n"  
+           "flush\\n"}' ${WORKDATA})
 EOF
 }
 
@@ -87,7 +87,7 @@ gen_data() {
 
 gen_iptables() {
     cat <<EOF
-    $(awk -F "/" '{print "iptables -I INPUT -p tcp --dport " $4 "  -m state --state NEW -j ACCEPT"}' ${WORKDATA}) 
+    $(awk -F "/" '{print "iptables -I INPUT -p tcp --dport $port -m state --state NEW -j ACCEPT"}' ${WORKDATA}) 
 EOF
 }
 
@@ -97,6 +97,7 @@ $(awk -F "/" '{print "ifconfig enp1s0 inet6 add " $5 "/64"}' ${WORKDATA})
 EOF
 }
 echo "installing apps"
+yum install -y net-tools
 yum -y install gcc net-tools bsdtar zip make >/dev/null
 
 install_3proxy
